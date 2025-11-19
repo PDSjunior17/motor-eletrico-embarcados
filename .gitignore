@@ -19,6 +19,9 @@ hardware/esp32-code/.vscode/
 hardware/esp32-code/lib/
 hardware/esp32-code/test/
 
+#secrets
+secrets.h
+
 # IDEs
 .vscode/
 .idea/
