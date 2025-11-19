@@ -3,17 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_gauges/gauges.dart';
 import 'package:intl/intl.dart';
 
-// Widgets
 import '../widgets/metric_display.dart';
 import '../widgets/throttle_lever.dart';
-
-// Services & Models
 import '../services/data_service.dart';
 import '../models/motor_data.dart';
 import '../services/queue_service.dart';
-
-// Screens
-import 'session_ended_screen.dart'; // Importante para a navegação final
+import 'session_ended_screen.dart';
 
 class ControlScreen extends StatefulWidget {
   final String userName;
@@ -30,46 +25,36 @@ class ControlScreen extends StatefulWidget {
 }
 
 class _ControlScreenState extends State<ControlScreen> {
-  // Estado visual da manete (0.0 a 1.0)
   double _throttleValue = 0.0; 
-  
-  // Serviços
   final DataService _dataService = DataService();
   final QueueService _queueService = QueueService();
-
-  // Controle de navegação para evitar múltiplas chamadas
   bool _hasNavigated = false;
 
   @override
   void initState() {
     super.initState();
-    // Garante que o serviço de dados esteja rodando
     _dataService.init();
   }
 
   @override
   Widget build(BuildContext context) {
-    // 1. StreamBuilder EXTERNO: Monitora a Fila e o Tempo Restante
+    // Detecta tamanho da tela para responsividade
+    final size = MediaQuery.of(context).size;
+    final isSmallScreen = size.width < 600;
+
     return StreamBuilder<QueueState>(
       stream: _queueService.queueStream,
       builder: (context, queueSnapshot) {
         
-        // --- LÓGICA DE SAÍDA (CORREÇÃO DA TELA PRETA) ---
-        // Se o estado mudou para 'finished', navegamos para a tela de fim de sessão
         if (queueSnapshot.hasData && 
             queueSnapshot.data!.myState == UserState.finished && 
             !_hasNavigated) {
-           
-           // Marca como navegado para não chamar duas vezes
            _hasNavigated = true;
-           
-           // Agenda a navegação para logo após o build atual
            Future.microtask(() {
              if (mounted) {
                Navigator.of(context).pushReplacement(
                  MaterialPageRoute(
                    builder: (context) => SessionEndedScreen(
-                     // Passamos o usuário atual para personalizar a mensagem de tchau
                      user: queueSnapshot.data!.localUser! 
                    )
                  ),
@@ -78,10 +63,8 @@ class _ControlScreenState extends State<ControlScreen> {
            });
         }
         
-        // Pega o tempo restante (ou 0 se ainda não carregou)
         int timeLeft = queueSnapshot.hasData ? queueSnapshot.data!.remainingSeconds : 0;
 
-        // 2. StreamBuilder INTERNO: Monitora os dados do Motor (RPM, etc)
         return StreamBuilder<MotorData>(
           stream: _dataService.motorDataStream,
           initialData: MotorData.zero(),
@@ -91,14 +74,13 @@ class _ControlScreenState extends State<ControlScreen> {
             return Scaffold(
               backgroundColor: const Color(0xFFF5F5F7),
               appBar: AppBar(
-                automaticallyImplyLeading: false, // Remove botão de voltar padrão
+                automaticallyImplyLeading: false,
                 backgroundColor: Colors.transparent,
                 elevation: 0,
                 centerTitle: true,
                 title: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
-                    // Fica vermelho quando faltam menos de 10 segundos
                     color: timeLeft < 10 ? Colors.redAccent : Colors.blueAccent,
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
@@ -122,15 +104,13 @@ class _ControlScreenState extends State<ControlScreen> {
                   ),
                 ),
                 actions: [
-                   // Botão de Sair / Desistir da vez
                    Padding(
                      padding: const EdgeInsets.only(right: 8.0),
                      child: IconButton(
                        icon: const Icon(Icons.logout, color: Colors.black54),
-                       tooltip: "Sair da Sessão",
                        onPressed: () {
-                         _queueService.leave(); // Avisa o serviço que sai
-                         // A navegação será tratada automaticamente pelo listener acima (UserState.finished)
+                         _queueService.leave();
+                         Navigator.of(context).pop(); // Pode dar erro se popar a unica rota, mas o listener acima trata
                        },
                      ),
                    )
@@ -138,33 +118,40 @@ class _ControlScreenState extends State<ControlScreen> {
               ),
               body: SafeArea(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isSmallScreen ? 10.0 : 20.0, 
+                    vertical: 10
+                  ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // --- COLUNA DA ESQUERDA: CONTROLES (MANETE) ---
+                      // --- CONTROLES (Manete) ---
                       Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Text(
+                          Text(
                             "POTÊNCIA",
                             style: TextStyle(
                               fontWeight: FontWeight.bold, 
                               color: Colors.black45,
+                              fontSize: isSmallScreen ? 10 : 14,
                               letterSpacing: 1.2
                             ),
                           ),
                           const SizedBox(height: 10),
                           Expanded(
-                            child: ThrottleLever(
-                              value: _throttleValue,
-                              onChanged: (val) {
-                                setState(() {
-                                  _throttleValue = val;
-                                });
-                                // Envia o comando para o serviço de dados (Simulado ou Real)
-                                _dataService.setThrottle(val);
-                              },
+                            child: SizedBox(
+                              // Reduz largura da manete em telas pequenas
+                              width: isSmallScreen ? 60 : 80,
+                              child: ThrottleLever(
+                                value: _throttleValue,
+                                onChanged: (val) {
+                                  setState(() {
+                                    _throttleValue = val;
+                                  });
+                                  _dataService.setThrottle(val);
+                                },
+                              ),
                             ),
                           ),
                           const SizedBox(height: 10),
@@ -175,17 +162,16 @@ class _ControlScreenState extends State<ControlScreen> {
                         ],
                       ),
 
-                      const SizedBox(width: 20),
+                      SizedBox(width: isSmallScreen ? 10 : 20),
 
-                      // --- COLUNA DA DIREITA: INSTRUMENTOS E MÉTRICAS ---
+                      // --- INSTRUMENTOS ---
                       Expanded(
                         child: Column(
                           children: [
-                            // Cabeçalho do usuário atual
                             _buildUserInfo(),
                             const SizedBox(height: 20),
 
-                            // Métricas (Potência e Eficiência)
+                            // Métricas
                             Row(
                               children: [
                                 Expanded(
@@ -194,7 +180,7 @@ class _ControlScreenState extends State<ControlScreen> {
                                     value: "${data.power.toStringAsFixed(2)} W",
                                   ),
                                 ),
-                                const SizedBox(width: 12),
+                                SizedBox(width: isSmallScreen ? 8 : 12),
                                 Expanded(
                                   child: MetricDisplay(
                                     label: "Eficiência",
@@ -207,10 +193,10 @@ class _ControlScreenState extends State<ControlScreen> {
                             
                             const Spacer(),
                             
-                            // Velocímetro Grande
-                            SizedBox(
-                              height: 280,
-                              child: _buildSpeedometer(data.rpm),
+                            // Velocímetro Responsivo
+                            Expanded(
+                              flex: 4,
+                              child: _buildSpeedometer(data.rpm, isSmallScreen),
                             ),
                             
                             const Spacer(),
@@ -247,12 +233,15 @@ class _ControlScreenState extends State<ControlScreen> {
             backgroundColor: Colors.grey[200],
           ),
           const SizedBox(width: 10),
-          Text(
-            widget.userName,
-            style: const TextStyle(
-              color: Colors.black87,
-              fontSize: 16, 
-              fontWeight: FontWeight.w600
+          Flexible(
+            child: Text(
+              widget.userName,
+              overflow: TextOverflow.ellipsis, // Corta nome se for muito longo
+              style: const TextStyle(
+                color: Colors.black87,
+                fontSize: 16, 
+                fontWeight: FontWeight.w600
+              ),
             ),
           ),
         ],
@@ -260,8 +249,12 @@ class _ControlScreenState extends State<ControlScreen> {
     );
   }
 
-  Widget _buildSpeedometer(double currentRPM) {
+  Widget _buildSpeedometer(double currentRPM, bool isSmall) {
     const double maxRPM = 169.0; 
+    
+    // Ajusta tamanho da fonte baseado na tela
+    final double annotationSize = isSmall ? 30.0 : 45.0;
+    final double labelSize = isSmall ? 10.0 : 14.0;
 
     return SfRadialGauge(
       axes: <RadialAxis>[
@@ -272,12 +265,13 @@ class _ControlScreenState extends State<ControlScreen> {
           endAngle: 40,
           showLabels: true,
           showTicks: true,
+          // Labels menores
+          axisLabelStyle: GaugeTextStyle(fontSize: labelSize),
           axisLineStyle: const AxisLineStyle(
             thickness: 20,
             cornerStyle: CornerStyle.bothCurve,
             color: Color(0xFFE0E0E0),
           ),
-          // Formatação para números inteiros no eixo, para limpar o visual
           numberFormat: NumberFormat("##0"), 
           ranges: <GaugeRange>[
             GaugeRange(startValue: 0, endValue: maxRPM * 0.7, color: Colors.greenAccent, startWidth: 20, endWidth: 20),
@@ -291,11 +285,11 @@ class _ControlScreenState extends State<ControlScreen> {
               animationType: AnimationType.easeOutBack,
               animationDuration: 100,
               needleStartWidth: 1,
-              needleEndWidth: 6,
+              needleEndWidth: isSmall ? 4 : 6,
               needleColor: const Color(0xFF2C3E50),
-              knobStyle: const KnobStyle(
+              knobStyle: KnobStyle(
                 knobRadius: 0.08,
-                color: Color(0xFF2C3E50),
+                color: const Color(0xFF2C3E50),
               ),
             ),
           ],
@@ -305,17 +299,17 @@ class _ControlScreenState extends State<ControlScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    currentRPM.toStringAsFixed(1), // Casas decimais aqui
-                    style: const TextStyle(
-                      fontSize: 40,
+                    currentRPM.toStringAsFixed(1),
+                    style: TextStyle(
+                      fontSize: annotationSize, // Fonte dinâmica
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF2C3E50),
+                      color: const Color(0xFF2C3E50),
                     ),
                   ),
-                  const Text(
+                  Text(
                     'RPM',
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: isSmall ? 10 : 14,
                       fontWeight: FontWeight.bold,
                       color: Colors.grey,
                     ),

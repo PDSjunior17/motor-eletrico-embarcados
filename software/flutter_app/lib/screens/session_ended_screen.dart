@@ -10,23 +10,26 @@ class SessionEndedScreen extends StatelessWidget {
   const SessionEndedScreen({super.key, required this.user});
 
   void _playAgain(BuildContext context) {
-    // Reinserir na fila
-    QueueService().init(user);
+    // CORREÇÃO CRÍTICA: Criar um NOVO usuário com NOVO ID (timestamp atual)
+    // Se usarmos o ID antigo, ele fura a fila porque o ID é baseado no tempo de criação
+    final newUser = UserModel(
+      id: 'user_${DateTime.now().millisecondsSinceEpoch}', 
+      name: user.name,
+      avatar: user.avatar,
+    );
+
+    QueueService().init(newUser);
     
-    // Voltar para a sala de espera
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (context) => const QueueScreen()),
     );
   }
 
   void _exit(BuildContext context) {
-    // Sai do sistema de fila completamente
     QueueService().leave();
-    
-    // Volta para a tela de login (EntryScreen)
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const EntryScreen()),
-      (route) => false, // Remove todo o histórico de navegação anterior
+      (route) => false,
     );
   }
 
@@ -49,13 +52,12 @@ class SessionEndedScreen extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              "Obrigado por testar o protótipo, ${user.name}!\nOutras pessoas estão esperando na fila.",
+              "Sua vez acabou, ${user.name}!\nVolte para a fila se quiser pilotar novamente.",
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 16, color: Colors.black54),
             ),
             const SizedBox(height: 48),
             
-            // Botão Jogar Novamente
             ElevatedButton(
               onPressed: () => _playAgain(context),
               style: ElevatedButton.styleFrom(
@@ -68,7 +70,6 @@ class SessionEndedScreen extends StatelessWidget {
             
             const SizedBox(height: 16),
             
-            // Botão Sair
             OutlinedButton(
               onPressed: () => _exit(context),
               style: OutlinedButton.styleFrom(
