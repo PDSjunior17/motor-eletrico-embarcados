@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_gauges/gauges.dart';
-import 'package:intl/intl.dart';
 
 import '../models/motor_data.dart';
 import '../services/data_service.dart';
@@ -21,7 +20,7 @@ class _QueueScreenState extends State<QueueScreen> {
   @override
   void initState() {
     super.initState();
-    // DataService já deve estar iniciado
+    // DataService já deve estar iniciado na main.dart
   }
 
   @override
@@ -29,7 +28,9 @@ class _QueueScreenState extends State<QueueScreen> {
     return StreamBuilder<QueueState>(
       stream: _queueService.queueStream,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        if (!snapshot.hasData) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
 
         final queueState = snapshot.data!;
 
@@ -37,12 +38,14 @@ class _QueueScreenState extends State<QueueScreen> {
         if (queueState.myState == UserState.driving) {
           // Usamos Future.microtask para evitar erro de build durante renderização
           Future.microtask(() {
-             Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (context) => ControlScreen(
-                userName: queueState.currentDriver!.name,
-                avatarIdentifier: queueState.currentDriver!.avatar,
-              )),
-            );
+             if (mounted && queueState.currentDriver != null) {
+               Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => ControlScreen(
+                  userName: queueState.currentDriver!.name,
+                  avatarIdentifier: queueState.currentDriver!.avatar,
+                )),
+              );
+             }
           });
         }
 
@@ -97,7 +100,11 @@ class _QueueScreenState extends State<QueueScreen> {
                           separatorBuilder: (_, __) => const Divider(),
                           itemBuilder: (context, index) {
                             final user = queueState.queue[index];
-                            final isMe = user.id == queueState.localUserId;
+                            
+                            // --- CORREÇÃO AQUI ---
+                            // Antes: queueState.localUserId
+                            // Agora: queueState.localUser?.id
+                            final isMe = user.id == queueState.localUser?.id;
                             
                             return ListTile(
                               leading: CircleAvatar(
@@ -164,13 +171,11 @@ class _QueueScreenState extends State<QueueScreen> {
   }
 
   Widget _buildSpectatorView() {
-    // Reutiliza o DataService para mostrar o velocímetro sem controle
     return StreamBuilder<MotorData>(
       stream: _dataService.motorDataStream,
       initialData: MotorData.zero(),
       builder: (context, snapshot) {
         final data = snapshot.data!;
-        // Simplificação do velocímetro para o modo espectador (menor)
         return Center(
           child: SizedBox(
             height: 180,
