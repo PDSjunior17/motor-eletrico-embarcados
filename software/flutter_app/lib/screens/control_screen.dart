@@ -1,9 +1,19 @@
 import 'dart:async';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_gauges/gauges.dart';
+import 'package:intl/intl.dart';
+
+// Widgets
 import '../widgets/metric_display.dart';
+import '../widgets/throttle_lever.dart';
+
+// Services & Models
+import '../services/data_service.dart';
+import '../models/motor_data.dart';
+import '../services/queue_service.dart';
+
+// Screens
+import 'session_ended_screen.dart'; // Importante para a navegação final
 
 class ControlScreen extends StatefulWidget {
   final String userName;
@@ -20,180 +30,229 @@ class ControlScreen extends StatefulWidget {
 }
 
 class _ControlScreenState extends State<ControlScreen> {
-  double _currentRPM = 0;
-  final double _maxRPM = 169.0; // Velocidade máxima do motor GA25-370 [cite: 52, 44]
-  Timer? _timer;
+  // Estado visual da manete (0.0 a 1.0)
+  double _throttleValue = 0.0; 
+  
+  // Serviços
+  final DataService _dataService = DataService();
+  final QueueService _queueService = QueueService();
 
-  // Métricas geradas aleatoriamente
-  double _consumedPower = 0.0;
-  double _efficiency = 0.0;
+  // Controle de navegação para evitar múltiplas chamadas
+  bool _hasNavigated = false;
 
   @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  void _updateMetrics() {
-    if (_currentRPM > 0) {
-      // Potência: aumenta com o RPM, com uma pequena variação.
-      // A 6V e ~0.45A, a potência máxima é de 2.7W. [cite: 52]
-      _consumedPower = (_currentRPM / _maxRPM) * 2.5 + (Random().nextDouble() * 0.2);
-
-      // Eficiência: geralmente maior em rotações médias. Usamos uma curva senoidal.
-      // O valor máximo será ~95% e o mínimo ~83%.
-      _efficiency = 85.0 + (10 * sin((_currentRPM / _maxRPM) * pi)) - (Random().nextDouble() * 2);
-    } else {
-      _consumedPower = 0.0;
-      _efficiency = 0.0;
-    }
-  }
-
-  void _startAccelerating() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-      setState(() {
-        if (_currentRPM < _maxRPM) {
-          _currentRPM += 1.5;
-        } else {
-          _currentRPM = _maxRPM;
-        }
-        _updateMetrics();
-      });
-    });
-  }
-
-  void _stopAccelerating() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
-      setState(() {
-        if (_currentRPM > 0) {
-          _currentRPM -= 1.8;
-        } else {
-          _currentRPM = 0;
-          _timer?.cancel();
-        }
-        _updateMetrics();
-      });
-    });
+  void initState() {
+    super.initState();
+    // Garante que o serviço de dados esteja rodando
+    _dataService.init();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildUserInfo(),
-              _buildSpeedometerAndMetrics(),
-              _buildControlButton(),
-            ],
-          ),
-        ),
-      ),
+    // 1. StreamBuilder EXTERNO: Monitora a Fila e o Tempo Restante
+    return StreamBuilder<QueueState>(
+      stream: _queueService.queueStream,
+      builder: (context, queueSnapshot) {
+        
+        // --- LÓGICA DE SAÍDA (CORREÇÃO DA TELA PRETA) ---
+        // Se o estado mudou para 'finished', navegamos para a tela de fim de sessão
+        if (queueSnapshot.hasData && 
+            queueSnapshot.data!.myState == UserState.finished && 
+            !_hasNavigated) {
+           
+           // Marca como navegado para não chamar duas vezes
+           _hasNavigated = true;
+           
+           // Agenda a navegação para logo após o build atual
+           Future.microtask(() {
+             if (mounted) {
+               Navigator.of(context).pushReplacement(
+                 MaterialPageRoute(
+                   builder: (context) => SessionEndedScreen(
+                     // Passamos o usuário atual para personalizar a mensagem de tchau
+                     user: queueSnapshot.data!.localUser! 
+                   )
+                 ),
+               );
+             }
+           });
+        }
+        
+        // Pega o tempo restante (ou 0 se ainda não carregou)
+        int timeLeft = queueSnapshot.hasData ? queueSnapshot.data!.remainingSeconds : 0;
+
+        // 2. StreamBuilder INTERNO: Monitora os dados do Motor (RPM, etc)
+        return StreamBuilder<MotorData>(
+          stream: _dataService.motorDataStream,
+          initialData: MotorData.zero(),
+          builder: (context, motorSnapshot) {
+            final data = motorSnapshot.data!;
+
+            return Scaffold(
+              backgroundColor: const Color(0xFFF5F5F7),
+              appBar: AppBar(
+                automaticallyImplyLeading: false, // Remove botão de voltar padrão
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                centerTitle: true,
+                title: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    // Fica vermelho quando faltam menos de 10 segundos
+                    color: timeLeft < 10 ? Colors.redAccent : Colors.blueAccent,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      )
+                    ]
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.timer, color: Colors.white, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        "TEMPO: ${timeLeft}s", 
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                   // Botão de Sair / Desistir da vez
+                   Padding(
+                     padding: const EdgeInsets.only(right: 8.0),
+                     child: IconButton(
+                       icon: const Icon(Icons.logout, color: Colors.black54),
+                       tooltip: "Sair da Sessão",
+                       onPressed: () {
+                         _queueService.leave(); // Avisa o serviço que sai
+                         // A navegação será tratada automaticamente pelo listener acima (UserState.finished)
+                       },
+                     ),
+                   )
+                ],
+              ),
+              body: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // --- COLUNA DA ESQUERDA: CONTROLES (MANETE) ---
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text(
+                            "POTÊNCIA",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold, 
+                              color: Colors.black45,
+                              letterSpacing: 1.2
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Expanded(
+                            child: ThrottleLever(
+                              value: _throttleValue,
+                              onChanged: (val) {
+                                setState(() {
+                                  _throttleValue = val;
+                                });
+                                // Envia o comando para o serviço de dados (Simulado ou Real)
+                                _dataService.setThrottle(val);
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            "${(_throttleValue * 100).toStringAsFixed(0)}%",
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(width: 20),
+
+                      // --- COLUNA DA DIREITA: INSTRUMENTOS E MÉTRICAS ---
+                      Expanded(
+                        child: Column(
+                          children: [
+                            // Cabeçalho do usuário atual
+                            _buildUserInfo(),
+                            const SizedBox(height: 20),
+
+                            // Métricas (Potência e Eficiência)
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: MetricDisplay(
+                                    label: "Consumo",
+                                    value: "${data.power.toStringAsFixed(2)} W",
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: MetricDisplay(
+                                    label: "Eficiência",
+                                    value: "${data.efficiency.toStringAsFixed(1)} %",
+                                    valueColor: data.efficiency > 90 ? Colors.green : Colors.black87,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            
+                            const Spacer(),
+                            
+                            // Velocímetro Grande
+                            SizedBox(
+                              height: 280,
+                              child: _buildSpeedometer(data.rpm),
+                            ),
+                            
+                            const Spacer(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
   Widget _buildUserInfo() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        CircleAvatar(
-          radius: 24,
-          backgroundColor: Colors.blueAccent.withOpacity(0.2),
-          //child: Icon(Icons.pets, size: 28, color: Colors.blueAccent), // Placeholder
-          // --- PARA USAR IMAGENS, TROQUE O CHILD ACIMA POR ESTE: ---
-          backgroundImage: AssetImage('assets/avatars/${widget.avatarIdentifier}.png'),
-        ),
-        const SizedBox(width: 12),
-        Text(
-          widget.userName,
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSpeedometerAndMetrics() {
-    return Expanded(
-      child: Stack(
-        alignment: Alignment.center,
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5)
+        ]
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Métrica Esquerda
-          Positioned(
-            left: 0,
-            top: 20,
-            child: MetricDisplay(
-              label: "Potência Consumida",
-              value: "${_consumedPower.toStringAsFixed(2)} W", // Métrica do projeto [cite: 127]
-            ),
+          CircleAvatar(
+            radius: 14,
+            backgroundImage: AssetImage('assets/avatars/${widget.avatarIdentifier}.png'),
+            backgroundColor: Colors.grey[200],
           ),
-          // Métrica Direita
-          Positioned(
-            right: 0,
-            top: 20,
-            child: MetricDisplay(
-              label: "Eficiência",
-              value: "${_efficiency.toStringAsFixed(1)} %", // Métrica do projeto [cite: 128]
-            ),
-          ),
-          // Velocímetro
-          Center(
-            child: SfRadialGauge(
-              axes: <RadialAxis>[
-                RadialAxis(
-                  minimum: 0,
-                  maximum: _maxRPM + 11, // Um pouco a mais para visualização
-                  axisLineStyle: const AxisLineStyle(
-                    thickness: 0.15,
-                    thicknessUnit: GaugeSizeUnit.factor,
-                  ),
-                  ranges: <GaugeRange>[
-                    GaugeRange(startValue: 0, endValue: 60, color: Colors.green, startWidth: 0.15, endWidth: 0.15, sizeUnit: GaugeSizeUnit.factor),
-                    GaugeRange(startValue: 60, endValue: 120, color: Colors.orange, startWidth: 0.15, endWidth: 0.15, sizeUnit: GaugeSizeUnit.factor),
-                    GaugeRange(startValue: 120, endValue: _maxRPM + 11, color: Colors.red, startWidth: 0.15, endWidth: 0.15, sizeUnit: GaugeSizeUnit.factor),
-                  ],
-                  pointers: <GaugePointer>[
-                    NeedlePointer(
-                      value: _currentRPM,
-                      enableAnimation: true,
-                      animationDuration: 100,
-                      needleStartWidth: 1,
-                      needleEndWidth: 5,
-                      knobStyle: KnobStyle(knobRadius: 0.08, sizeUnit: GaugeSizeUnit.factor),
-                    ),
-                  ],
-                  annotations: <GaugeAnnotation>[
-                    GaugeAnnotation(
-                      widget: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                           Text(
-                            'RPM ATUAL', // Métrica do projeto [cite: 103, 126]
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          Text(
-                            _currentRPM.toStringAsFixed(0),
-                            style: const TextStyle(
-                              fontSize: 35,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      angle: 90,
-                      positionFactor: 0.6,
-                    ),
-                  ],
-                ),
-              ],
+          const SizedBox(width: 10),
+          Text(
+            widget.userName,
+            style: const TextStyle(
+              color: Colors.black87,
+              fontSize: 16, 
+              fontWeight: FontWeight.w600
             ),
           ),
         ],
@@ -201,37 +260,74 @@ class _ControlScreenState extends State<ControlScreen> {
     );
   }
 
-  Widget _buildControlButton() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 20.0),
-      child: GestureDetector(
-        onTapDown: (_) => _startAccelerating(),
-        onTapUp: (_) => _stopAccelerating(),
-        onTapCancel: () => _stopAccelerating(),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 25, horizontal: 80),
-          decoration: BoxDecoration(
-            color: Colors.blueAccent,
-            borderRadius: BorderRadius.circular(50),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.blueAccent.withOpacity(0.4),
-                spreadRadius: 2,
-                blurRadius: 10,
-                offset: const Offset(0, 5),
+  Widget _buildSpeedometer(double currentRPM) {
+    const double maxRPM = 169.0; 
+
+    return SfRadialGauge(
+      axes: <RadialAxis>[
+        RadialAxis(
+          minimum: 0,
+          maximum: maxRPM,
+          startAngle: 140,
+          endAngle: 40,
+          showLabels: true,
+          showTicks: true,
+          axisLineStyle: const AxisLineStyle(
+            thickness: 20,
+            cornerStyle: CornerStyle.bothCurve,
+            color: Color(0xFFE0E0E0),
+          ),
+          // Formatação para números inteiros no eixo, para limpar o visual
+          numberFormat: NumberFormat("##0"), 
+          ranges: <GaugeRange>[
+            GaugeRange(startValue: 0, endValue: maxRPM * 0.7, color: Colors.greenAccent, startWidth: 20, endWidth: 20),
+            GaugeRange(startValue: maxRPM * 0.7, endValue: maxRPM * 0.9, color: Colors.orangeAccent, startWidth: 20, endWidth: 20),
+            GaugeRange(startValue: maxRPM * 0.9, endValue: maxRPM, color: Colors.redAccent, startWidth: 20, endWidth: 20),
+          ],
+          pointers: <GaugePointer>[
+            NeedlePointer(
+              value: currentRPM,
+              enableAnimation: true,
+              animationType: AnimationType.easeOutBack,
+              animationDuration: 100,
+              needleStartWidth: 1,
+              needleEndWidth: 6,
+              needleColor: const Color(0xFF2C3E50),
+              knobStyle: const KnobStyle(
+                knobRadius: 0.08,
+                color: Color(0xFF2C3E50),
               ),
-            ],
-          ),
-          child: const Text(
-            "Acelerar",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
             ),
-          ),
+          ],
+          annotations: <GaugeAnnotation>[
+            GaugeAnnotation(
+              widget: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    currentRPM.toStringAsFixed(1), // Casas decimais aqui
+                    style: const TextStyle(
+                      fontSize: 40,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF2C3E50),
+                    ),
+                  ),
+                  const Text(
+                    'RPM',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+              angle: 90,
+              positionFactor: 0.5,
+            ),
+          ],
         ),
-      ),
+      ],
     );
   }
 }

@@ -12,6 +12,10 @@
 .swiftpm/
 migrate_working_dir/
 
+#arquivo de senhas
+secrets.h
+.env
+
 # IntelliJ related
 *.iml
 *.ipr

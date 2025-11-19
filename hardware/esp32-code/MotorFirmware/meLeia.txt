@@ -1,0 +1,1 @@
+Dependência: Instale a biblioteca "Firebase Arduino Client Library for ESP8266 and ESP32" por Mobizt via Gerenciador de Bibliotecas do Arduino IDE.

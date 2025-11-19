@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'control_screen.dart';
+import '../models/user_model.dart';
+import '../services/queue_service.dart';
+import 'queue_screen.dart'; // Importe a tela de fila
+
 class EntryScreen extends StatefulWidget {
   const EntryScreen({super.key});
 
@@ -13,8 +16,7 @@ class _EntryScreenState extends State<EntryScreen> {
   String? _selectedAvatar;
   String _userName = '';
 
-  // Lista de avatares. Substituir pelos caminhos das imagens.
-  // Ex: 'assets/avatars/fox.png', 'assets/avatars/panda.png', etc.
+  // Lista de avatares
   final List<String> avatarOptions = [
     'fox', 'panda', 'giraffe', 'rabbit', 'bear', 'lion', 'cool'
   ];
@@ -28,15 +30,24 @@ class _EntryScreenState extends State<EntryScreen> {
     }
   }
 
-  void _navigateToControlScreen() {
+  void _joinQueue() {
     if (_userName.isNotEmpty && _selectedAvatar != null) {
-      // Usamos pushReplacement para que o usuário não possa voltar para esta tela
+      
+      // 1. Cria o objeto do usuário atual
+      final me = UserModel(
+        id: 'user_${DateTime.now().millisecondsSinceEpoch}', // Gera ID único baseado no tempo
+        name: _userName,
+        avatar: _selectedAvatar!,
+      );
+
+      // 2. Inicializa o serviço de fila com este usuário
+      QueueService().init(me);
+
+      // 3. Navega para a Sala de Espera (QueueScreen)
+      // Usamos pushReplacement para que ele não possa voltar para a tela de login
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (context) => ControlScreen(
-            userName: _userName,
-            avatarIdentifier: _selectedAvatar!,
-          ),
+          builder: (context) => const QueueScreen(),
         ),
       );
     }
@@ -138,9 +149,7 @@ class _EntryScreenState extends State<EntryScreen> {
                     width: 3.0,
                   ),
                 ),
-                //child: Icon(Icons.pets, size: 40, color: isSelected ? Colors.blueAccent : Colors.grey), // Placeholder
-                // --- PARA USAR IMAGENS, TROQUE O CHILD ACIMA POR ESTE: ---
-                 child: Padding(
+                child: Padding(
                    padding: const EdgeInsets.all(8.0),
                    child: Image.asset('assets/avatars/$avatar.png'),
                  ),
@@ -150,12 +159,12 @@ class _EntryScreenState extends State<EntryScreen> {
         ),
         const SizedBox(height: 40),
         ElevatedButton(
-          // O botão só fica ativo se um avatar for escolhido
-          onPressed: _selectedAvatar != null ? _navigateToControlScreen : null,
+          // Chama a função _joinQueue em vez de ir direto
+          onPressed: _selectedAvatar != null ? _joinQueue : null,
           style: ElevatedButton.styleFrom(
             backgroundColor: _selectedAvatar != null ? Colors.green : Colors.grey,
           ),
-          child: const Text('Iniciar Sessão'),
+          child: const Text('Entrar na Fila'),
         ),
       ],
     );
