@@ -52,3 +52,8 @@ yarn-error.log*
 # Temporary files
 *.tmp
 *.temp
+
+#flutter
+software/flutter_app/.firebase/
+software/flutter_app/.firebaserc
+software/flutter_app/firebase.json
